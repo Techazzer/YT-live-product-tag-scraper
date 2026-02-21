@@ -1,0 +1,6 @@
+streamlit
+playwright
+pandas
+gspread
+google-auth
+apscheduler

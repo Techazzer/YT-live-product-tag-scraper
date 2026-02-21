@@ -1,0 +1,11 @@
+services:
+  - type: web
+    name: youtube-scraper
+    env: python
+    buildCommand: "./setup.sh"
+    startCommand: "streamlit run app.py --server.port $PORT"
+    envVars:
+      - key: PYTHON_VERSION
+        value: 3.11.0
+      - key: GOOGLE_CREDENTIALS_JSON
+        sync: false
