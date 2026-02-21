@@ -3,7 +3,7 @@ services:
     name: youtube-scraper
     env: python
     buildCommand: "./setup.sh"
-    startCommand: "streamlit run app.py --server.port $PORT"
+    startCommand: "streamlit run app.py --server.port $PORT --server.address 0.0.0.0 --server.enableCORS false --server.enableXsrfProtection false"
     envVars:
       - key: PYTHON_VERSION
         value: 3.11.0
