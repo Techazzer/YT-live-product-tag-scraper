@@ -492,10 +492,11 @@ def run_cron_job():
 
     args = [(url, None) for url in urls_only]
 
-    # Scrape karo
+    # Scrape karo (Sequentially on Render to avoid OOM crashes)
     results_by_url = {}
-    with Pool(processes=5) as pool:
-        for results, logs in pool.imap_unordered(_scrape_worker, args):
+    for arg in args:
+        try:
+            results, logs = _scrape_worker(arg)
             for log_line in logs:
                 print(f"[CRON] {log_line}")
             for r in results:
@@ -503,6 +504,8 @@ def run_cron_job():
                 if url not in results_by_url:
                     results_by_url[url] = []
                 results_by_url[url].append(r)
+        except Exception as e:
+            print(f"[CRON] Error processing {arg[0]}: {e}")
 
     updated_with_product = 0
     have_no_product = 0
@@ -584,7 +587,7 @@ with st.expander("Advanced Settings"):
     cookies_json = st.text_area("Paste Cookies (JSON format)", height=100)
     max_workers = st.slider(
         "Parallel Workers (zyada = fast, RAM zyada lagegi)",
-        min_value=1, max_value=10, value=5
+        min_value=1, max_value=10, value=2
     )
 
 if st.button("Start Scraping"):
