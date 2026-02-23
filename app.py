@@ -468,10 +468,18 @@ def scrape_youtube_products(video_urls, log_placeholder, cookies=None, max_worke
 # ─────────────────────────────────────────────────────────────
 # CRON JOB — daily 11 AM automatic Google Sheet run
 # ─────────────────────────────────────────────────────────────
-def run_cron_job():
+def run_cron_job(progress_bar=None, log_container=None):
     """Sheet se URLs fetch karo, scrape karo, results wapas sheet mein likho."""
     start_time = datetime.datetime.now()
-    print(f"[CRON] Started at {start_time}")
+    start_str = start_time.strftime("%Y-%m-%d %H:%M:%S")
+    print(f"[CRON] Started at {start_str}")
+    
+    # Save running state to file for UI to read later
+    try:
+        with open("cron_status.txt", "w") as f:
+            f.write(f"Started collecting URLs at {start_str}...")
+    except Exception:
+        pass
 
     try:
         urls_with_rows, already_done_count, total_rows = fetch_urls_from_sheet()
@@ -480,12 +488,25 @@ def run_cron_job():
         return
 
     if not urls_with_rows:
-        print("[CRON] No pending URLs found in sheet.")
+        msg = f"Completed at {datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')} (0 pending URLs)"
+        print(f"[CRON] {msg}")
+        try:
+            with open("cron_status.txt", "w") as f:
+                f.write(msg)
+        except Exception:
+            pass
+        
         end_time = datetime.datetime.now()
         log_cron_run(start_time, end_time, total_rows, 0, already_done_count, 0)
         return
 
-    print(f"[CRON] {len(urls_with_rows)} URLs to process")
+    msg = f"Started processing {len(urls_with_rows)} URLs at {start_str}"
+    print(f"[CRON] {msg}")
+    try:
+        with open("cron_status.txt", "w") as f:
+            f.write(msg)
+    except Exception:
+        pass
 
     urls_only = [url for _, url in urls_with_rows]
     row_map = {url: row_num for row_num, url in urls_with_rows}
@@ -493,51 +514,75 @@ def run_cron_job():
     args = [(url, None) for url in urls_only]
 
     # Scrape karo (Sequentially on Render to avoid OOM crashes)
-    results_by_url = {}
-    for arg in args:
+    total_to_process = len(args)
+    updated_with_product = 0
+    have_no_product = 0
+    
+    # UI Live Logs Tracker
+    live_logs = []
+    
+    for idx, arg in enumerate(args):
+        url = arg[0]
+        row_num = row_map[url]
         try:
             results, logs = _scrape_worker(arg)
             for log_line in logs:
                 print(f"[CRON] {log_line}")
-            for r in results:
-                url = r["Source URL"]
-                if url not in results_by_url:
-                    results_by_url[url] = []
-                results_by_url[url].append(r)
-        except Exception as e:
-            print(f"[CRON] Error processing {arg[0]}: {e}")
+                if log_container:
+                    live_logs.append(log_line)
+                    # Show only last 20 lines to prevent UI freezing
+                    log_container.code("\n".join(live_logs[-20:]), language="text")
 
-    updated_with_product = 0
-    have_no_product = 0
-    # Sheet update karo
-    for url, row_num in row_map.items():
-        try:
-            rows = results_by_url.get(url, [])
-            if not rows:
+            # --- INSTANT GOOGLE SHEET UPDATE ---
+            if not results:
                 update_sheet_row(row_num, "NO", "", "", "")
                 have_no_product += 1
             else:
-                # Multiple products ho sakte hain — pehla product main row mein, baaki append
-                first = rows[0]
+                first = results[0]
                 status = first["Product_Tag_Status"]
                 update_sheet_row(
                     row_num,
                     status,
-                    first["Title"],
-                    first["Price"],
-                    first["Platform"],
+                    first.get("Title", ""),
+                    first.get("Price", ""),
+                    first.get("Platform", ""),
                 )
                 if status == "YES":
                     updated_with_product += 1
                 else:
                     have_no_product += 1
             print(f"[CRON] Updated row {row_num} for {url[-30:]}")
+
         except Exception as e:
-            print(f"[CRON] Sheet update error for row {row_num}: {e}")
+            err_msg = f"[CRON] Error processing {url}: {e}"
+            print(err_msg)
+            if log_container:
+                live_logs.append(err_msg)
+                log_container.code("\n".join(live_logs[-20:]), language="text")
+                
+        # Update progress bar
+        if progress_bar:
+            progress = (idx + 1) / total_to_process
+            progress_bar.progress(progress)
+            
+        # Update text file to act as a heartbeat
+        try:
+            with open("cron_status.txt", "w") as f:
+                f.write(f"Running ({idx + 1}/{total_to_process} URLs processed) - Started {start_str}")
+        except Exception:
+            pass
 
     end_time = datetime.datetime.now()
     log_cron_run(start_time, end_time, total_rows, updated_with_product, already_done_count, have_no_product)
-    print(f"[CRON] Finished at {end_time}")
+    
+    end_str = end_time.strftime("%Y-%m-%d %H:%M:%S")
+    print(f"[CRON] Finished at {end_str}")
+    
+    try:
+        with open("cron_status.txt", "w") as f:
+            f.write(f"Completed processing {len(args)} URLs at {end_str}")
+    except Exception:
+        pass
 
 
 # ─────────────────────────────────────────────────────────────
@@ -564,14 +609,28 @@ st.markdown("Extract tagged product metadata from YouTube videos.")
 
 # ── Cron Status + Manual Trigger ──
 st.subheader("🕐 Cron Job")
+
+# Local Status Persistency Check
+if os.path.exists("cron_status.txt"):
+    try:
+        with open("cron_status.txt", "r") as f:
+            status_text = f.read().strip()
+        if status_text:
+            st.info(f"**Last Status:** {status_text}")
+    except Exception:
+        pass
+
 col_a, col_b = st.columns([3, 1])
 with col_a:
-    st.info("Auto-runs daily at **6:00 AM** and **6:00 PM IST** — fetches pending URLs from Google Sheet and updates results.")
+    st.markdown("Auto-runs daily at **6:00 AM** and **6:00 PM IST** — fetches pending URLs from Google Sheet and updates results.")
 with col_b:
     if st.button("▶ Run Now (Manual)"):
+        pb = st.progress(0)
+        lc = st.empty()
         with st.spinner("Running cron job manually..."):
-            run_cron_job()
+            run_cron_job(progress_bar=pb, log_container=lc)
         st.success("Cron job complete! Check your Google Sheet.")
+        st.rerun()
 
 st.divider()
 
