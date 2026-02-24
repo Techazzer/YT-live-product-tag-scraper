@@ -1,4 +1,9 @@
 import streamlit as st
+import os
+
+# Render deployment fix for Playwright cache wipe
+os.environ["PLAYWRIGHT_BROWSERS_PATH"] = "0"
+
 from playwright.sync_api import sync_playwright
 import pandas as pd
 import time
